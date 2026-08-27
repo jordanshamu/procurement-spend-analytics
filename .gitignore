@@ -1,0 +1,21 @@
+# ---- Raw data: NEVER commit the source spend file ----
+data/raw/
+*.csv
+!reports/*.csv          # allow the small derived report tables
+data/processed/*.parquet
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+*.egg-info/
+.pytest_cache/
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

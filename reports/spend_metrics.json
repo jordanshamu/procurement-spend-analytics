@@ -1,0 +1,61 @@
+{
+  "dataset": "City of Houston Checkbook FY2024 (real public data)",
+  "date_range": [
+    "2023-07-05",
+    "2024-06-28"
+  ],
+  "raw_rows": 267983,
+  "clean_spend_rows": 228646,
+  "addressable_rows": 208167,
+  "total_vendor_payments_usd": 6669512089.39,
+  "addressable_spend_usd": 3761652694.4,
+  "addressable_pct": 0.564,
+  "addressable_vendors": 3701,
+  "addressable_categories": 278,
+  "hhi_addressable_vendor": 124.1,
+  "abc": {
+    "A": {
+      "n_vendors": 159,
+      "pct_vendors": 0.043,
+      "spend_usd": 3006642080.47,
+      "pct_spend": 0.7993
+    },
+    "B": {
+      "n_vendors": 336,
+      "pct_vendors": 0.0908,
+      "spend_usd": 566910780.91,
+      "pct_spend": 0.1507
+    },
+    "C": {
+      "n_vendors": 3206,
+      "pct_vendors": 0.8663,
+      "spend_usd": 188099833.02,
+      "pct_spend": 0.05
+    }
+  },
+  "vendors_for_80pct": 160,
+  "top_vendor": {
+    "name": "HENSEL PHELPS CONSTRUCTION CO",
+    "spend_usd": 194661399.87,
+    "pct": 0.0517
+  },
+  "consolidation": {
+    "categories": [
+      "Management Consulting Services",
+      "Architectural Services",
+      "Miscellaneous Support Services",
+      "Miscellaneous Other Services & Charges",
+      "Temporary Personnel Services"
+    ],
+    "tail_pool_usd": 397397093.08,
+    "savings_at_5pct": 19869854.65,
+    "savings_at_8pct_base": 31791767.45,
+    "savings_at_12pct": 47687651.17
+  },
+  "seasonality": {
+    "peak_month": "2024-06",
+    "peak_spend_usd": 558195320.89,
+    "peak_vs_avg_pct": 0.7807,
+    "trough_month": "2024-01"
+  }
+}

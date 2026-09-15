@@ -1,8 +1,14 @@
 # ---- Raw data: NEVER commit the source spend file ----
 data/raw/
 *.csv
-!reports/*.csv          # allow the small derived report tables
 data/processed/*.parquet
+
+# Allow the small derived report tables back in.
+# NOTE: git does not support trailing comments on pattern lines — a '#' after a
+# pattern becomes part of the pattern and the rule silently never matches.
+# The comment therefore lives on its own line above.
+!reports/
+!reports/*.csv
 
 # ---- Python ----
 __pycache__/

@@ -284,6 +284,24 @@ for i,(v,tv) in enumerate(zip(Ss['estimated_savings'],Ss['tail_vendors'])):
 ax.set_xlabel('Est. annual savings ($M) — 8% of consolidatable tail')
 ax.set_title(f'Sized opportunity: ${base/1e6:.0f}M/yr across 5 indirect categories'); plt.show()""")
 
+md("""### Derived tables written to disk
+
+Everything above is computed in memory. These are the five tables worth keeping: two large
+intermediates under `data/processed/` (git-ignored, regenerated from the raw file), and three
+small analyst-facing tables under `reports/` that are committed so a reviewer without the
+268k-row source extract can still read the classification, the scorecard, and the
+fragmentation view.""")
+
+code("""written = utils.export_tables(
+    clean=df,
+    addressable=addr,
+    abc=abc,
+    scorecard=utils.supplier_scorecard(addr),
+    fragmentation=utils.fragmentation_table(addr, min_vendors=5),
+)
+for label, path in written.items():
+    print(f'{label:32s} -> {path}')""")
+
 md("""## 8. Sourcing recommendation
 
 Grounded in what *this* dataset shows — specific, opinionated, costed.

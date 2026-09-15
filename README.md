@@ -143,9 +143,9 @@ procurement-spend-analytics/
 ├── reports/
 │   ├── executive_summary.md     ← non-technical stakeholder summary
 │   ├── spend_metrics.json       ← all headline metrics (auto-generated)
-│   ├── supplier_scorecard_top50.csv
-│   ├── abc_vendor_classification.csv
-│   └── category_fragmentation.csv
+│   ├── supplier_scorecard_top50.csv      ┐
+│   ├── abc_vendor_classification.csv     ├ written by §7's export step
+│   └── category_fragmentation.csv        ┘ (utils.export_tables)
 ├── visualizations/              ← all plots (auto-saved on run)
 ├── make_charts.py               ← regenerates all figures
 ├── build_notebook.py            ← assembles & executes the notebook

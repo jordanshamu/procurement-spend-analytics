@@ -15,6 +15,7 @@ reads top-to-bottom and every number is reproducible. No global state.
 
 from __future__ import annotations
 import re
+from pathlib import Path
 import numpy as np
 import pandas as pd
 
@@ -309,3 +310,49 @@ def seasonality(df: pd.DataFrame) -> pd.DataFrame:
            .rename(columns={"amount": "spend"}))
     m["share"] = m["spend"] / m["spend"].sum()
     return m
+
+
+def export_tables(clean: pd.DataFrame,
+                  addressable: pd.DataFrame,
+                  abc: pd.DataFrame,
+                  scorecard: pd.DataFrame,
+                  fragmentation: pd.DataFrame,
+                  proc_dir: str = "../data/processed",
+                  report_dir: str = "../reports") -> dict:
+    """Write the derived tables the README documents.
+
+    Two destinations, on purpose:
+
+      data/processed/  large intermediate frames. Regenerated on every run and
+                       git-ignored, because they are only useful if you already
+                       have the raw Houston extract.
+      reports/         the three small analyst-facing tables. These ARE committed,
+                       so a reviewer who cannot download the 268k-row source file
+                       can still read the ABC classification, the supplier
+                       scorecard, and the category fragmentation view.
+
+    Returns a dict of {label: path} so the notebook can print what it wrote.
+    """
+    proc, rep = Path(proc_dir), Path(report_dir)
+    proc.mkdir(parents=True, exist_ok=True)
+    rep.mkdir(parents=True, exist_ok=True)
+
+    written = {}
+
+    clean.to_csv(proc / "spend_clean.csv", index=False)
+    written["spend_clean"] = str(proc / "spend_clean.csv")
+
+    addressable.to_csv(proc / "spend_addressable.csv", index=False)
+    written["spend_addressable"] = str(proc / "spend_addressable.csv")
+
+    abc.to_csv(rep / "abc_vendor_classification.csv", index=False)
+    written["abc_vendor_classification"] = str(rep / "abc_vendor_classification.csv")
+
+    # Top 50 only — the full scorecard is 3,701 rows and not worth committing.
+    scorecard.head(50).to_csv(rep / "supplier_scorecard_top50.csv", index=False)
+    written["supplier_scorecard_top50"] = str(rep / "supplier_scorecard_top50.csv")
+
+    fragmentation.to_csv(rep / "category_fragmentation.csv", index=False)
+    written["category_fragmentation"] = str(rep / "category_fragmentation.csv")
+
+    return written

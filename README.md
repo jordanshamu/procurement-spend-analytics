@@ -8,7 +8,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Portfolio](https://img.shields.io/badge/Portfolio-datascienceportfol.io%2Fjordanshamu-2c3e50)](https://datascienceportfol.io/jordanshamu)
 
-> **New project** in Jordan Shamukiga's Data & Analytics Portfolio — targeting **Plant Buyer** and the **cost-control side of Finance Business Analyst** roles.
 > Analyst: [Jordan Shamukiga](https://github.com/jordanshamu) · [datascienceportfol.io/jordanshamu](https://datascienceportfol.io/jordanshamu)
 
 ---

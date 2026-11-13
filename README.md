@@ -16,7 +16,7 @@
 
 Procurement is the largest controllable cost line in most manufacturing and public organizations. A plant or corporate buyer's core questions are always the same: **where does the money actually go, who are the critical suppliers, where is spend fragmented across too many vendors, and what can we consolidate to unlock volume leverage?**
 
-This project answers those questions on a **real, 268k-row public spend file** — the City of Houston's FY2024 "Checkbook" of every vendor payment. A municipal government is a useful stand-in for a large multi-category buyer: hundreds of expense categories, thousands of suppliers, capital and indirect spend side by side. The techniques — **ABC segmentation, tail-spend rationalization, price-dispersion monitoring, contract-coverage governance, and fiscal-timing arbitrage** — transfer directly to a plant sourcing desk.
+This project answers those questions on a **real, 268k-row public spend file** — the City of Houston's FY2024 "Checkbook" of every vendor payment. A municipal government is a useful stand-in for a large multi-category buyer: hundreds of expense categories, thousands of suppliers, capital and indirect spend side by side. The techniques — **ABC segmentation, tail-spend rationalization, payment-size monitoring, contract-coverage checks, and spend-timing analysis** — transfer directly to a plant sourcing desk.
 
 **This uses real data, not synthetic.** The one dimension public data cannot provide — supplier **quality/defect** rates from an internal ERP/QMS — is explicitly scoped out and flagged where an illustrative placeholder appears.
 
@@ -31,10 +31,26 @@ This project answers those questions on a **real, 268k-row public spend file** �
 | Raw rows | **267,983** |
 | Date range | **2023-07-05 → 2024-06-28** (Houston FY2024) |
 | Clean spend rows (after cleaning funnel) | 228,646 |
-| Total FY24 vendor payments | **$6.67B** |
+| Total FY24 vendor payments (gross, refunds excluded) | **$6.67B** |
 | **Addressable procurement spend** | **$3.76B (56%)** |
 | Non-addressable (debt · pension · payroll) removed | $2.91B (44%) |
 | Addressable vendors / categories | **3,701 vendors · 278 GL categories** |
+
+### Gross to net
+
+All spend figures in this README are **gross**: positive payments only. Refunds and reversals (negative amounts) are excluded from totals. This table shows what that excludes. For each line, gross + refunds/reversals = net; the three "Removed" lines plus "In-scope" add back to the raw file. Source: `reports/gross_to_net_reconciliation.csv`.
+
+| Line | Rows | Gross | Refunds & reversals | Net |
+|---|---|---|---|---|
+| Raw file | 267,983 | $6,767.2M | −$673.8M (14,364 rows) | $6,093.3M |
+| Removed: exact duplicates | 1,226 | $2.4M | −$0.3M (8 rows) | $2.1M |
+| Removed: pool-cash check clearing | 110 | $0.0M | −$18.6M (110 rows) | −$18.6M |
+| Removed: pseudo-vendors (one-time / refund) | 23,914 | $95.3M | −$0.3M (160 rows) | $95.0M |
+| **In-scope vendor payments** | 242,733 | **$6,669.5M** | −$654.7M (14,086 rows) | $6,014.8M |
+| of which non-addressable | 20,583 | $2,907.9M | −$0.2M (104 rows) | $2,907.6M |
+| of which **addressable procurement** | 222,150 | **$3,761.7M** | −$654.5M (13,982 rows) | $3,107.2M |
+
+Row counts include 1 zero-amount row in the in-scope set. Of the −$654.7M in-scope refunds and reversals, −$597.1M (4,213 rows) is booked to one GL account, `General Vendor - Primary Reconciliation Account`; the notebook lists the rest by category. Because these negatives are excluded, gross addressable spend ($3.76B) is higher than net ($3.11B).
 
 ### Spend Concentration (ABC / Pareto, addressable)
 
@@ -52,18 +68,20 @@ This project answers those questions on a **real, 268k-row public spend file** �
 |---|---|---|
 | 1 | **The biggest "vendor" is a bank.** The Bank of New York = $1.18B (18%) of raw payments — debt-service/trustee flows, not procurement. | You must separate addressable spend from financial plumbing first, or every number is wrong. |
 | 2 | **Management Consulting is the fragmentation champion:** $411M across **257 vendors**, top-3 only 28%. | Largest single consolidation prize. |
-| 3 | **June spend runs +78% above the monthly average** — public-sector fiscal-year-end flush. | Retime discretionary buys to the Jan–Feb trough to dodge year-end price premiums. |
-| 4 | **Off-contract leakage:** several >$20M vendors sit under 50% contract coverage with the highest price dispersion. | Governance flag — bring under contract before renewal. |
+| 3 | **In FY2024, June spend ran +78% above the monthly average** (January was the low, −28%). This is one fiscal year's pattern. | Check other years of the checkbook before treating it as recurring or moving buys. |
+| 4 | **Contract-coverage gaps:** 8 vendors with >$20M addressable spend have a contract number on under 50% of it. Several are public bodies or banks. | A blank contract number is a gap in the file, not proof of unauthorized spend. Check which payments should link to a contract. |
 
-### Sized Opportunity
+### Consolidation Scenario Sizing
 
-| Scenario | Assumed savings on consolidatable tail | Est. annual savings |
+These are scenarios, not estimates from the data. The data gives the tail pool ($397.4M of spend outside the top 3 vendors in 5 indirect/services categories); the savings rates are assumptions.
+
+| Scenario | Assumed savings rate on tail pool | Annual savings (scenario) |
 |---|---|---|
-| Floor | 5% | **~$19.9M** |
-| **Base (headline)** | **8%** | **~$31.8M** |
-| Stretch | 12% | **~$47.7M** |
+| Low | 5% | ~$19.9M |
+| Mid | 8% | ~$31.8M |
+| High | 12% | ~$47.7M |
 
-> Base case ≈ **$32M/yr, ~0.8% of addressable spend**, from consolidating fragmented tail spend across 5 indirect/services categories. All numbers computed at runtime and exported to `reports/spend_metrics.json`.
+> At the assumed 8% rate the scenario is **~$31.8M/yr, ~0.8% of addressable spend**. All numbers computed at runtime and exported to `reports/spend_metrics.json`.
 
 ---
 
@@ -76,9 +94,9 @@ This project answers those questions on a **real, 268k-row public spend file** �
 ### 2. Cleaning Funnel (every decision logged)
 | # | Issue | Decision |
 |---|---|---|
-| 1 | 1,914 exact-duplicate rows | Drop |
+| 1 | 1,226 exact-duplicate rows (repeat copies; one copy of each kept) | Drop |
 | 2 | Pool-cash `Vendor Disbursement` check-clearing | Drop — internal double-count |
-| 3 | 14k negative amounts (refunds/reversals) | Exclude from spend totals |
+| 3 | 14,364 negative amounts in the raw file (refunds/reversals) | Exclude from spend totals; reconciled in the gross-to-net table above |
 | 4 | Placeholder / one-time / refund pseudo-vendors | Drop — not sourceable suppliers |
 | 5 | Vendor name casing/whitespace variants | Normalize |
 
@@ -98,10 +116,10 @@ Tidy aggregation over any dimension (vendor · category · department · fund ·
 - Monthly spend series → seasonality / fiscal-year-end effect
 
 ### 7. Supplier Scorecard (on dimensions public data supports)
-Total spend · order/payment frequency · avg & median ticket · **price dispersion (CV)** · active months · **contract coverage**. A **payment-regularity proxy** stands in for on-time delivery (no PO-date vs pay-date pair exists in the file — stated explicitly, not faked). **Quality/defect is out of scope** for public data; a clearly-labelled synthetic score demonstrates scorecard *shape* only.
+Total spend · order/payment frequency · avg & median ticket · **payment-size dispersion (CV)** — how much a vendor's payment amounts vary, not a measure of price changes · active months · **contract coverage** — share of spend on payments that carry a contract number. A **payment-regularity proxy** stands in for on-time delivery (no PO-date vs pay-date pair exists in the file — stated explicitly, not faked). **Quality/defect is out of scope** for public data; a clearly-labelled synthetic score demonstrates scorecard *shape* only.
 
 ### 8. Fragmentation & Savings Sizing
-Per-category vendor count, top-3 share, HHI, and tail-spend pool → conservative 5/8/12% savings scenarios on consolidatable tail.
+Per-category vendor count, top-3 share, HHI, and tail-spend pool → scenario sizing at assumed 5% / 8% / 12% savings rates on the consolidatable tail.
 
 ### 9. Sourcing Recommendation
 Named **consolidate / scrutinize / retime / grow / rationalize** calls with dollar impact.
@@ -119,11 +137,11 @@ All plots auto-save to `visualizations/` on notebook run.
 | 03 | `03_abc_segmentation.png` | ABC vendor/spend share bars |
 | 04 | `04_top_vendors.png` | Top 15 addressable suppliers |
 | 05 | `05_top_categories.png` | Top 15 GL expense categories |
-| 06 | `06_seasonality.png` | Monthly spend & June FY-end spike |
+| 06 | `06_seasonality.png` | Monthly spend, FY2024 only (June peak) |
 | 07 | `07_fragmentation_map.png` | Category fragmentation bubble map |
-| 08 | `08_savings_opportunity.png` | Sized consolidation savings |
+| 08 | `08_savings_opportunity.png` | Consolidation scenario at an assumed 8% |
 | 09 | `09_supplier_scorecard.png` | Top-15 supplier scorecard heatmap |
-| 10 | `10_price_vs_quality_synth.png` | Price dispersion vs (synthetic) quality |
+| 10 | `10_payment_size_vs_quality_synth.png` | Payment-size dispersion vs (synthetic) quality |
 
 ---
 
@@ -143,8 +161,9 @@ procurement-spend-analytics/
 │   ├── executive_summary.md     ← non-technical stakeholder summary
 │   ├── spend_metrics.json       ← all headline metrics (auto-generated)
 │   ├── supplier_scorecard_top50.csv      ┐
-│   ├── abc_vendor_classification.csv     ├ written by §7's export step
-│   └── category_fragmentation.csv        ┘ (utils.export_tables)
+│   ├── abc_vendor_classification.csv     │ written by §7's export step
+│   ├── category_fragmentation.csv        │ (utils.export_tables);
+│   └── gross_to_net_reconciliation.csv   ┘ individual payee names masked
 ├── visualizations/              ← all plots (auto-saved on run)
 ├── make_charts.py               ← regenerates all figures
 ├── build_notebook.py            ← assembles & executes the notebook
@@ -185,6 +204,8 @@ python make_charts.py
 python build_notebook.py
 # Or open interactively:
 jupyter lab notebooks/procurement_spend_analysis.ipynb
+# Unit tests for the reconciliation and name-masking helpers (no raw data needed):
+python -m pytest -q tests
 ```
 
 ### Use the engine directly
@@ -217,7 +238,10 @@ opp  = utils.size_consolidation_savings(df, "Management Consulting Services",
 - **Real data only.** Every headline number derives from the raw checkbook at runtime.
 - **On-time delivery** is approximated by *payment regularity* — the file has no PO-date/pay-date pair, so true lead-time is not computable. Labelled as a proxy throughout.
 - **Quality/defect is out of scope** for public spend data (it lives in ERP/QMS). A synthetic quality field appears in exactly one chart, clearly flagged as illustrative, and never drives a recommendation.
-- **Savings are directional estimates** using published 5–15% strategic-sourcing ranges applied to consolidatable tail spend — an opportunity size, not a guarantee.
+- **Savings are scenario sizing**: assumed 5% / 8% / 12% rates applied to consolidatable tail spend. The rates are not estimated from this data.
+- **Seasonality is one fiscal year.** The June peak is FY2024's pattern; other years of the checkbook are needed to call it recurring.
+- **Contract coverage** measures whether a payment row carries a contract number. A blank is a coverage gap in the file, not evidence of unauthorized spend.
+- **Individual payees are masked.** The checkbook pays some private individuals directly. In the committed `reports/` tables, payee names that look like a person's name are replaced with `INDIVIDUAL PAYEE nnnn` (`utils.mask_individual_names`; the rule over-masks some small businesses).
 
 ---
 

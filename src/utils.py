@@ -54,7 +54,7 @@ def clean_spend(df_raw: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     Turn the raw checkbook into an analysis-ready *spend* table.
 
     Cleaning decisions (each defensible and logged):
-      1. Drop 1,914 exact-duplicate rows.
+      1. Drop exact-duplicate rows (repeat copies only; first copy kept).
       2. Drop the 'Constant In and Out' department + 'Vendor Disbursement'
          GL rows — these are pool-cash check-clearing entries, i.e. internal
          double-counting, not spend.
@@ -117,6 +117,79 @@ def clean_spend(df_raw: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
         print(f"  final spend rows            {len(df):>10,}")
         print(f"  total attributable spend    ${df['amount'].sum():>15,.0f}")
     return df
+
+
+# ----------------------------------------------------------------------------
+# 1b. Gross-to-net reconciliation
+# ----------------------------------------------------------------------------
+def _scope_masks(df_raw: pd.DataFrame, nonaddr_patterns=()) -> dict:
+    """Row masks over the RAW file that mirror the steps in clean_spend()."""
+    amt = pd.to_numeric(df_raw[COLMAP["amount"]], errors="coerce")
+    dup = df_raw.duplicated()
+    pool = ~dup & ((df_raw[COLMAP["department"]] == "Constant In and Out")
+                   | df_raw[COLMAP["category"]].str.contains(
+                       "Vendor Disbursement", na=False))
+    vend = df_raw[COLMAP["vendor"]]
+    pseudo = (~dup & ~pool
+              & (vend.isin(PLACEHOLDER_VENDORS)
+                 | vend.str.contains(_ONE_TIME_RX, na=False)))
+    inscope = ~dup & ~pool & ~pseudo
+    if nonaddr_patterns:
+        na = df_raw[COLMAP["category"]].str.contains(
+            "|".join(nonaddr_patterns), case=False, na=False)
+    else:
+        na = pd.Series(False, index=df_raw.index)
+    return {"amount": amt, "dup": dup, "pool": pool, "pseudo": pseudo,
+            "inscope": inscope, "nonaddr": inscope & na,
+            "addressable": inscope & ~na}
+
+
+def spend_reconciliation(df_raw: pd.DataFrame, nonaddr_patterns=()) -> pd.DataFrame:
+    """
+    One table that walks the raw file down to the spend used in the analysis,
+    with gross (positive) payments, refunds/reversals (negative amounts) and
+    net shown side by side for every line.
+
+    The analysis totals use the GROSS column: refunds and reversals are
+    excluded from spend, and this table shows exactly how much that is.
+    The three "removed" lines plus "in-scope" add back to the raw file.
+    """
+    m = _scope_masks(df_raw, nonaddr_patterns)
+    amt = m["amount"]
+    lines = [
+        ("Raw file",                                    pd.Series(True, index=df_raw.index)),
+        ("Removed: exact duplicates",                   m["dup"]),
+        ("Removed: pool-cash check clearing",           m["pool"]),
+        ("Removed: pseudo-vendors (one-time / refund)", m["pseudo"]),
+        ("In-scope vendor payments",                    m["inscope"]),
+        ("  of which non-addressable",                  m["nonaddr"]),
+        ("  of which addressable procurement",          m["addressable"]),
+    ]
+    rows = []
+    for label, mask in lines:
+        a = amt[mask]
+        rows.append({
+            "line": label,
+            "rows": int(mask.sum()),
+            "gross_rows": int((a > 0).sum()),
+            "gross_usd": round(float(a[a > 0].sum()), 2),
+            "refund_reversal_rows": int((a < 0).sum()),
+            "refunds_reversals_usd": round(float(a[a < 0].sum()), 2),
+            "zero_rows": int((a == 0).sum()),
+            "net_usd": round(float(a.sum()), 2),
+        })
+    return pd.DataFrame(rows)
+
+
+def inscope_refunds(df_raw: pd.DataFrame, nonaddr_patterns=()) -> pd.DataFrame:
+    """The negative-amount rows (refunds / reversals) that pass every other
+    cleaning step — i.e. the rows dropped only because their amount is < 0."""
+    m = _scope_masks(df_raw, nonaddr_patterns)
+    keep = m["inscope"] & (m["amount"] < 0)
+    out = df_raw[keep].copy()
+    out["amount"] = m["amount"][keep]
+    out["addressable"] = m["addressable"][keep]
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -195,11 +268,17 @@ def supplier_scorecard(df: pd.DataFrame, top_n: int | None = None) -> pd.DataFra
       - total_spend            purchasing volume
       - txns                   order/payment frequency
       - avg_txn / median_txn   ticket size
-      - price_dispersion (CV)  std/mean of line amounts -> pricing volatility
+      - payment_size_dispersion (CV)  std/mean of the vendor's payment amounts.
+                               Variation in payment size only — a payment can
+                               bundle many items or a partial invoice, so this
+                               is NOT a measure of unit-price volatility.
       - active_months          breadth of relationship across the year
       - regularity_proxy       txns / active_months -> cadence (on-time proxy*)
       - n_categories/depts     how broadly the vendor is used
-      - contract_coverage      share of the vendor's spend under a contract #
+      - contract_coverage      share of the vendor's spend on rows that carry a
+                               contract number. A blank contract number is a
+                               coverage gap in this file, not evidence that the
+                               payment was unauthorized or off-contract.
 
     *On-time proxy: the checkbook has no PO-date vs pay-date pair, so true
      lead-time can't be computed. Payment *regularity* (consistent monthly
@@ -220,7 +299,7 @@ def supplier_scorecard(df: pd.DataFrame, top_n: int | None = None) -> pd.DataFra
         "n_departments": g["department"].nunique(),
         "contract_spend": contract_spend,
     })
-    sc["price_dispersion"] = (sc["std_txn"] / sc["avg_txn"]).replace(
+    sc["payment_size_dispersion"] = (sc["std_txn"] / sc["avg_txn"]).replace(
         [np.inf, -np.inf], 0).fillna(0)
     sc["regularity_proxy"] = sc["txns"] / sc["active_months"]
     sc["contract_coverage"] = (sc["contract_spend"] / sc["total_spend"]).fillna(0)
@@ -239,12 +318,12 @@ def add_illustrative_quality(sc: pd.DataFrame, seed: int = 42) -> pd.DataFrame:
     an internal ERP/QMS (PPM defect rates, RMA counts, inspection fails). Public
     spend data cannot supply it. This function attaches a clearly-labelled
     SYNTHETIC quality score so the scorecard *shape* is complete for a portfolio
-    demo. It is deterministic and loosely (negatively) tied to price dispersion
-    so the demo tells a coherent story. DO NOT use for real decisions.
+    demo. It is deterministic and loosely (negatively) tied to payment-size
+    dispersion so the demo tells a coherent story. DO NOT use for real decisions.
     """
     rng = np.random.default_rng(seed)
     out = sc.copy()
-    base = 92 - 18 * (out["price_dispersion"].clip(0, 3) / 3)
+    base = 92 - 18 * (out["payment_size_dispersion"].clip(0, 3) / 3)
     noise = rng.normal(0, 4, len(out))
     out["quality_score_SYNTH"] = (base + noise).clip(60, 100).round(1)
     out["_quality_is_synthetic"] = True
@@ -284,9 +363,10 @@ def size_consolidation_savings(df: pd.DataFrame, category: str,
     Size a concrete consolidation opportunity for one category.
 
     Model: consolidating fragmented tail spend onto a few awarded suppliers
-    unlocks volume leverage. We apply a conservative `savings_rate` (default
-    8%, a mid-point of the widely-cited 5-15% strategic-sourcing range) to the
-    *tail* spend that sits outside the top `keep_vendors` today.
+    unlocks volume leverage. `savings_rate` is an ASSUMPTION, not something
+    estimated from the data (the notebook runs 5% / 8% / 12% scenarios). It is
+    applied to the *tail* spend that sits outside the top `keep_vendors` today,
+    so the result is scenario sizing, not a forecast.
     """
     vspend = (df[df["category"] == category]
               .groupby("vendor")["amount"].sum()
@@ -312,11 +392,98 @@ def seasonality(df: pd.DataFrame) -> pd.DataFrame:
     return m
 
 
+# ----------------------------------------------------------------------------
+# 6. Privacy: mask payees that look like individual people
+# ----------------------------------------------------------------------------
+# The checkbook pays some private individuals directly (refunds, settlements,
+# reimbursements, small contracts). Their names are public in the source file,
+# but there is no reason to republish them in this repo's derived tables.
+#
+# Rule (deliberately over-masks): a payee name is kept only if it looks like an
+# organisation — it contains a digit, '&', or one of the words below, or it is
+# a single word. Any other name of 2-4 words is treated as a person and
+# replaced with a numbered placeholder.
+_BUSINESS_WORDS = set("""
+INC INC. INCORPORATED LLC L.L.C. LLP LP L.P. LTD LTD. LIMITED CO CO. CORP CORP.
+CORPORATION COMPANY COMPANIES PC P.C. PLLC PA P.A. JV GMBH NA N.A. TRUST
+GROUP SERVICES SERVICE SOLUTIONS SUPPLY SUPPLIES ASSOCIATES ASSOCIATION ASSOC ASSN
+SYSTEMS SYSTEM INTERNATIONAL ENGINEERING ENGINEERS CONSTRUCTION CONSTRUCTORS
+CONTRACTORS CONTRACTING MANAGEMENT TECHNOLOGIES TECHNOLOGY TECH CONSULTING
+CONSULTANTS ENTERPRISES ENTERPRISE INDUSTRIES INDUSTRIAL PRODUCTS PARTNERS
+PARTNERSHIP HOLDINGS HOLDING EQUIPMENT ENVIRONMENTAL COMMUNICATIONS SOFTWARE DATA
+NETWORK NETWORKS MEDIA DIGITAL PRINTING PUBLISHING PRODUCTIONS STUDIO STUDIOS
+DESIGN ARCHITECTS ARCHITECTURE LABORATORIES LABS LAB MEDICAL HEALTH HEALTHCARE
+DENTAL VETERINARY HOSPITAL CLINIC PHARMACY ELECTRIC ELECTRICAL PLUMBING ROOFING
+MECHANICAL ENERGY POWER WATER WASTE RECYCLING TRUCK TRUCKS PARTS MOTORS AUTO
+AUTOMOTIVE AVIATION SALES RENTAL RENTALS DISTRIBUTORS DISTRIBUTION DISTRIBUTING
+MANUFACTURING FENCE SIGNS SECURITY SAFETY FIRE RESCUE HARDWARE INSTRUMENTS
+CONTROLS CONTROL REALTY PROPERTIES PROPERTY DEVELOPMENT REDEVELOPMENT LAND HOMES
+APARTMENTS HOTEL HOTELS RESORT RESTAURANT CATERING BANK FINANCIAL CAPITAL
+INSURANCE ADVISORS FUND FOUNDATION INSTITUTE UNIVERSITY COLLEGE SCHOOL SCHOOLS
+ACADEMY ISD DISTRICT MUD AUTHORITY AGENCY COUNTY CITY STATE DEPARTMENT DEPT OFFICE
+BOARD COUNCIL COMMISSION GOVERNMENT MUNICIPAL PUBLIC NATIONAL AMERICAN AMERICA USA
+TEXAS HOUSTON CENTER CENTRE CLUB SOCIETY ALLIANCE COALITION LEAGUE CHAPTER
+COMMUNITY CIVIC NEIGHBORHOOD HOMEOWNERS OWNERS VILLAGE ESTATES MINISTRIES CHURCH
+MUSEUM LIBRARY THEATRE THEATER ARTS ORCHESTRA SYMPHONY BALLET OPERA ZOO GOLF
+SPORTS FITNESS TRAINING LEARNING EDUCATION RESEARCH ANALYTICS RESOURCES STAFFING
+PERSONNEL MAINTENANCE JANITORIAL CLEANING LANDSCAPING LAWN TURF TREE POOL
+TRAFFIC TRANSPORTATION TRANSIT LOGISTICS FREIGHT MOVING STORAGE TOWING GLASS
+STEEL CONCRETE ASPHALT PAVING MATERIALS CHEMICAL CHEMICALS GAS OIL PETROLEUM FUEL
+UNIFORMS FURNITURE OFFICE PRODUCTS MARKETING ADVERTISING REPORTING APPRAISAL
+MEDIATION MEDIATIONS LAW LEGAL ATTORNEYS FIRM COURT POSTMASTER POSTAL UNITED GLOBAL
+WORLDWIDE AND DIAGNOSTICS CONSERVANCY CONSERVATION CONDOMINIUMS TOWNHOMES
+TOWNHOUSES TOWNHOUSE HOMEOWNER HOA CASITAS GARDENS SUPPORT CLEARINGHOUSE SDU CHILD
+ENFORCEMENT INTERVENTION TV FM RADIO BROADCASTING NEWS TIMES PRESS PUBLICATIONS
+VIDEO ARMY COMPUTERS COMPUTER WAREHOUSE WHSE DEPOT SPECIALTIES SPECIALIST
+SPECIALISTS TESTING SHREDDING COMMERCIAL PROMOTIONS PROMOTIONAL CONCEPTS APPAREL
+MOWING REMODELING BROTHERS BROTHER ENGINES TRANSMISSIONS TRANSMISSION LIFTS
+MATERIAL HANDLING FLOORING PERFORMANCE CHEVROLET HILTON AIRPORT COMMITTEE
+FEDERATION COMMONWEALTH CONFERENCE CHARITIES ORTHODOX LUTHERAN EVANGELICAL
+HEADQUARTERS QUARTET PLAYERS PROGRAM DIST MGMT REDEVL IMPROVEMENT MOUNTAIN PIPE
+PIPES TANK THERMAL DECORATING WELLNESS RECOVERY MENTORING MARKET DAILY ELECTRONICS
+MILITARY BANKING CAREER ONLINE INVESTIGATORS TRANSLATION ART PROFESSIONAL
+INFORMATION EXECUTIVE HORTICULTURAL CUSTODIAN ACCT GREATER ZONE REINVESTMENT
+CONSTRUCCIONES SOUTHWEST
+""".split())
+
+# Organisations whose names read like people's names, checked by hand among the
+# Class A/B payees. Everything else that trips the rule is masked.
+_KNOWN_ORGANISATIONS = {"LINEBARGER HEARD GOGGAN GRAHAM", "WW GRAINGER"}
+
+
+def looks_like_individual(name) -> bool:
+    """True when a payee name looks like a private person (see rule above)."""
+    if not isinstance(name, str) or not name.strip():
+        return False
+    base = name.upper().split(" - ")[0]          # "JANE DOE - COH1" -> "JANE DOE"
+    if base.strip() in _KNOWN_ORGANISATIONS:
+        return False
+    if re.search(r"[0-9&@/]", base) or re.search(r"\bI ?S ?D\b", base):
+        return False
+    words = re.findall(r"[A-Z][A-Z'.\-]*", base)
+    if len(words) < 2 or len(words) > 4:
+        return False
+    if any(w.strip(".,") in _BUSINESS_WORDS or w in _BUSINESS_WORDS for w in words):
+        return False
+    return True
+
+
+def mask_individual_names(names: pd.Series,
+                          prefix: str = "INDIVIDUAL PAYEE") -> pd.Series:
+    """Replace person-like payee names with 'INDIVIDUAL PAYEE 0001', ... in the
+    order they appear (so the number carries no information about the name)."""
+    is_person = names.map(looks_like_individual)
+    out = names.copy()
+    out[is_person] = [f"{prefix} {i:04d}" for i in range(1, int(is_person.sum()) + 1)]
+    return out
+
+
 def export_tables(clean: pd.DataFrame,
                   addressable: pd.DataFrame,
                   abc: pd.DataFrame,
                   scorecard: pd.DataFrame,
                   fragmentation: pd.DataFrame,
+                  reconciliation: pd.DataFrame | None = None,
                   proc_dir: str = "../data/processed",
                   report_dir: str = "../reports") -> dict:
     """Write the derived tables the README documents.
@@ -326,10 +493,15 @@ def export_tables(clean: pd.DataFrame,
       data/processed/  large intermediate frames. Regenerated on every run and
                        git-ignored, because they are only useful if you already
                        have the raw Houston extract.
-      reports/         the three small analyst-facing tables. These ARE committed,
+      reports/         the small analyst-facing tables. These ARE committed,
                        so a reviewer who cannot download the 268k-row source file
                        can still read the ABC classification, the supplier
-                       scorecard, and the category fragmentation view.
+                       scorecard, the category fragmentation view and the
+                       gross-to-net reconciliation.
+
+    Payee names that look like private individuals are masked in every table
+    written to reports/ (see mask_individual_names). data/processed/ is not
+    masked because it is git-ignored and never leaves the machine.
 
     Returns a dict of {label: path} so the notebook can print what it wrote.
     """
@@ -345,14 +517,21 @@ def export_tables(clean: pd.DataFrame,
     addressable.to_csv(proc / "spend_addressable.csv", index=False)
     written["spend_addressable"] = str(proc / "spend_addressable.csv")
 
+    abc = abc.assign(vendor=mask_individual_names(abc["vendor"]))
     abc.to_csv(rep / "abc_vendor_classification.csv", index=False)
     written["abc_vendor_classification"] = str(rep / "abc_vendor_classification.csv")
 
     # Top 50 only — the full scorecard is 3,701 rows and not worth committing.
-    scorecard.head(50).to_csv(rep / "supplier_scorecard_top50.csv", index=False)
+    top50 = scorecard.head(50)
+    top50 = top50.assign(vendor=mask_individual_names(top50["vendor"]))
+    top50.to_csv(rep / "supplier_scorecard_top50.csv", index=False)
     written["supplier_scorecard_top50"] = str(rep / "supplier_scorecard_top50.csv")
 
     fragmentation.to_csv(rep / "category_fragmentation.csv", index=False)
     written["category_fragmentation"] = str(rep / "category_fragmentation.csv")
+
+    if reconciliation is not None:
+        reconciliation.to_csv(rep / "gross_to_net_reconciliation.csv", index=False)
+        written["gross_to_net_reconciliation"] = str(rep / "gross_to_net_reconciliation.csv")
 
     return written

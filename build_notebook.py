@@ -82,15 +82,49 @@ md("""### Data-quality issues found (and the cleaning decision for each)
 
 | # | Issue | Decision |
 |---|---|---|
-| 1 | 1,914 exact-duplicate rows | Drop |
+| 1 | Exact-duplicate rows (repeat copies of an identical row) | Drop the repeats, keep one copy |
 | 2 | `Constant In and Out` dept + `Vendor Disbursement` GL = pool-cash check-clearing | Drop — internal double-count, not spend |
-| 3 | 14k negative amounts (refunds/reversals) | Exclude from spend totals; they'd understate purchasing volume & corrupt frequency |
+| 3 | Negative amounts (refunds/reversals) | Exclude from spend totals (analysis uses gross payments); shown and reconciled to net below |
 | 4 | Placeholder / one-time / refund pseudo-vendors (`*`, `GENERAL ONE-TIME VENDOR`, `COURTS REFUNDS`, water-refund bucket) | Drop — not suppliers you can source from |
 | 5 | Vendor name casing/whitespace variants | Normalize to upper/trimmed |
 
 All five are applied in `utils.clean_spend()`, which prints its funnel so nothing is hidden.""")
 
 code("""df = utils.clean_spend(raw)   # prints the cleaning funnel""")
+
+md("""### Gross-to-net reconciliation
+
+The spend totals in this notebook are **gross**: positive payments only. Refunds and reversals
+(negative amounts) are excluded. The table below shows how much that excludes, and walks the raw
+file down to the in-scope and addressable totals. For every line, gross + refunds/reversals = net,
+and the three "Removed" lines plus "In-scope" add back to the raw file.""")
+
+code("""NONADDR = ['Revenue Bonds','Pension Payable','Bond Principal','Bond Interest','Principle Retirement',
+           'Employee Claims','Payroll - 3rd Party','Municipal Pension','Annexation','Utilities Receivable',
+           'Interest Charges Past Due','Juror Compensation','Grant Contract','Subrecipient','Sub-Recipient',
+           'Receivable']
+recon = utils.spend_reconciliation(raw, NONADDR)
+r = recon.set_index('line')
+# checks: removals + in-scope = raw; gross + refunds = net; gross in-scope = clean_spend total
+parts = ['Removed: exact duplicates','Removed: pool-cash check clearing',
+         'Removed: pseudo-vendors (one-time / refund)','In-scope vendor payments']
+assert r.loc[parts,'rows'].sum() == r.loc['Raw file','rows']
+assert abs(r.loc[parts,'net_usd'].sum() - r.loc['Raw file','net_usd']) < 1
+assert ((recon['gross_usd'] + recon['refunds_reversals_usd'] - recon['net_usd']).abs() < 1).all()
+assert abs(r.loc['In-scope vendor payments','gross_usd'] - df['amount'].sum()) < 1
+assert r.loc['In-scope vendor payments','gross_rows'] == len(df)
+recon.assign(gross_M=lambda d:(d['gross_usd']/1e6).round(1),
+             refunds_M=lambda d:(d['refunds_reversals_usd']/1e6).round(1),
+             net_M=lambda d:(d['net_usd']/1e6).round(1))[
+    ['line','rows','gross_rows','gross_M','refund_reversal_rows','refunds_M','zero_rows','net_M']]""")
+
+code("""# The refunds/reversals removed from in-scope spend: largest categories
+ref = utils.inscope_refunds(raw, NONADDR)
+print(f'{len(ref):,} in-scope refund/reversal rows, ${ref["amount"].sum():,.0f} in total '
+      f'(${ref.loc[ref["addressable"],"amount"].sum():,.0f} in addressable categories)')
+(ref.groupby('GL Account Description')['amount'].agg(['size','sum'])
+    .rename(columns={'size':'rows','sum':'refunds_usd'})
+    .sort_values('refunds_usd').head(10))""")
 
 md("""## 2. The addressable-spend correction — the first real finding
 
@@ -102,11 +136,7 @@ dollars, but outside procurement's control.
 Any honest spend analysis has to separate **addressable procurement** from financial plumbing first,
 or every downstream number is wrong.""")
 
-code("""NONADDR = ['Revenue Bonds','Pension Payable','Bond Principal','Bond Interest','Principle Retirement',
-           'Employee Claims','Payroll - 3rd Party','Municipal Pension','Annexation','Utilities Receivable',
-           'Interest Charges Past Due','Juror Compensation','Grant Contract','Subrecipient','Sub-Recipient',
-           'Receivable']
-df['addressable'] = ~df['category'].str.contains('|'.join(NONADDR), case=False, na=False)
+code("""df['addressable'] = ~df['category'].str.contains('|'.join(NONADDR), case=False, na=False)
 addr = df[df['addressable']].copy()
 
 TOTAL, ADDR = df['amount'].sum(), addr['amount'].sum()
@@ -171,9 +201,9 @@ top=abc.head(15).assign(spend_M=lambda d:(d['amount']/1e6).round(1),
 top[['rank','vendor','spend_M','share']]""")
 
 md("""**The surprise inside the head.** Even after stripping trustee flows, `THE BANK OF NEW YORK`
-still reappears further down (~$49M) under a services GL with **0% contract coverage and the highest
-price dispersion on the board** — a classic "spend hiding in the wrong bucket" flag the scorecard
-catches in §6. The genuine top of the addressable list is **heavy-construction & water-infrastructure
+still reappears further down (~$49M) under a services GL with **no contract number on any of its
+payments and the widest payment-size dispersion among the top 15** — spend that may be coded to the
+wrong bucket, which the scorecard picks up in §6. The genuine top of the addressable list is **heavy-construction & water-infrastructure
 JVs** (Hensel Phelps, Houston Waterworks Team, Austin-Gilbane) — capital programs, not repeatable
 buys.""")
 
@@ -195,20 +225,26 @@ ax.bar(range(len(seas)), seas['spend']/1e6, color=cols)
 ax.set_xticks(range(len(seas))); ax.set_xticklabels([m.strftime(\"%b'%y\") for m in months],rotation=45,ha='right')
 avg=seas['spend'].mean()/1e6; ax.axhline(avg,color=SLATE,ls='--',lw=1.1,label=f'avg ${avg:.0f}M')
 ax.set_ylabel('Spend ($M)'); ax.legend()
-ax.set_title('Spend seasonality — pronounced June fiscal-year-end spike'); plt.show()
-pk=seas.loc[seas['spend'].idxmax()]
-print(f\"Peak: {pk['month']} at ${pk['spend']/1e6:.0f}M = +{pk['spend']/seas['spend'].mean()*100-100:.0f}% vs the monthly average.\")""")
+ax.set_title('Monthly spend, FY2024 only — June (fiscal year-end) is the peak'); plt.show()
+seas['vs_avg_pct']=(seas['spend']/seas['spend'].mean()*100-100).round(0)
+pk=seas.loc[seas['spend'].idxmax()]; lo=seas.loc[seas['spend'].idxmin()]
+print(f\"Peak: {pk['month']} at ${pk['spend']/1e6:.0f}M = {pk['vs_avg_pct']:+.0f}% vs the monthly average.\")
+print(f\"Low:  {lo['month']} at ${lo['spend']/1e6:.0f}M = {lo['vs_avg_pct']:+.0f}% vs the monthly average.\")
+print('One fiscal year of data: this is FY2024\\'s pattern, not a tested multi-year seasonal effect.')
+seas[['month','vs_avg_pct']].set_index('month').T""")
 
-md("""**Seasonality call.** June (fiscal year-end) runs **+78% above the monthly average** — the
-public-sector "use-it-or-lose-it" budget flush. For a buyer this is the single most actionable
-timing signal: it inflates prices and rushes sourcing. **Pull discretionary buys forward into the
-Jan–Feb trough** and the city captures better pricing and avoids year-end premiums.""")
+md("""**Seasonality read (FY2024 only).** In this fiscal year, June (fiscal year-end) ran **+78% above
+the monthly average** and January was the low month (−28%). That fits a year-end budget push, but it
+is one year's pattern: confirming it as a recurring effect needs the other years of the checkbook,
+and this file has no prices, so it says nothing about whether June buys cost more. If the pattern
+holds across years, it is a reason to look at moving discretionary buys earlier in the year.""")
 
 md("""## 6. Supplier scorecard
 
 Scored on the dimensions **public spend data can actually support**: total spend, order/payment
-frequency, ticket size, price dispersion (a pricing-consistency signal), relationship breadth
-(active months), and contract coverage.
+frequency, ticket size, payment-size dispersion (coefficient of variation of payment amounts — how
+much payment sizes vary, not a measure of price changes), relationship breadth (active months), and
+contract coverage (share of spend on payments that carry a contract number).
 
 A **payment-regularity** field stands in as an *on-time proxy* — the checkbook has no PO-date vs
 pay-date pair, so true lead-time/on-time delivery is not computable here and I say so rather than
@@ -217,15 +253,19 @@ fake it.""")
 code("""sc = utils.supplier_scorecard(addr, top_n=15)
 show = sc.assign(spend_M=lambda d:(d['total_spend']/1e6).round(1),
                  avg_k=lambda d:(d['avg_txn']/1e3).round(0),
-                 price_disp=lambda d:d['price_dispersion'].round(2),
+                 pay_size_disp=lambda d:d['payment_size_dispersion'].round(2),
                  contract=lambda d:(d['contract_coverage']*100).round(0))
-show[['vendor','spend_M','txns','avg_k','price_disp','active_months','contract']]""")
+show[['vendor','spend_M','txns','avg_k','pay_size_disp','active_months','contract']]""")
 
-code("""# Flag: high spend but LOW contract coverage = leakage risk / off-contract buying
-risk = sc[(sc['total_spend']>2e7) & (sc['contract_coverage']<0.5)]
-print('High-spend, low-contract-coverage vendors (governance flags):')
-risk.assign(spend_M=lambda d:(d['total_spend']/1e6).round(1),
-            contract=lambda d:(d['contract_coverage']*100).round(0))[['vendor','spend_M','contract','price_dispersion']]""")
+code("""# Contract-coverage gaps: >$20M vendors where under half the spend carries a contract number.
+# A blank contract number means the payment is not linked to a contract in this file. It does NOT
+# mean the spend was unauthorized: payments to other public bodies, utilities, or invoices paid
+# under other authority can legitimately have no contract number.
+full = utils.supplier_scorecard(addr)
+gap = full[(full['total_spend']>2e7) & (full['contract_coverage']<0.5)]
+print(f'{len(gap)} vendors with >$20M addressable spend have <50% of it tagged with a contract number:')
+gap.assign(spend_M=lambda d:(d['total_spend']/1e6).round(1),
+           contract=lambda d:(d['contract_coverage']*100).round(0))[['vendor','spend_M','contract','payment_size_dispersion']]""")
 
 md("""### The quality/defect dimension is deliberately out of scope
 
@@ -239,19 +279,23 @@ shape for this portfolio demo. It is deterministic, flagged, and must never driv
 code("""scq = utils.add_illustrative_quality(utils.supplier_scorecard(addr, top_n=40))
 fig,ax=plt.subplots(figsize=(9,5))
 sizes=(scq['total_spend']/scq['total_spend'].max()*800)+25
-s=ax.scatter(scq['price_dispersion'], scq['quality_score_SYNTH'], s=sizes,
+s=ax.scatter(scq['payment_size_dispersion'], scq['quality_score_SYNTH'], s=sizes,
              c=scq['regularity_proxy'], cmap='viridis', alpha=0.8, edgecolor=INK, lw=0.4)
-ax.set_xlabel('Price dispersion (CV) — REAL'); ax.set_ylabel('Quality score — SYNTHETIC ⚠')
+ax.set_xlabel('Payment-size dispersion (CV) — REAL'); ax.set_ylabel('Quality score — SYNTHETIC ⚠')
 ax.set_title('Scorecard shape demo (quality axis is illustrative only)')
 plt.colorbar(s,label='Payment regularity (txns/active month)')
 ax.text(0.98,0.03,'⚠ Synthetic quality — ERP/QMS data out of scope',transform=ax.transAxes,
         ha='right',fontsize=8.5,style='italic',color=CLAY); plt.show()""")
 
-md("""## 7. Fragmentation & the sized consolidation opportunity
+md("""## 7. Fragmentation & consolidation scenario sizing
 
 Fragmentation = many vendors serving one category with low top-3 concentration. That's where
 consolidating onto a few awarded suppliers unlocks volume leverage. I target **indirect / services**
-categories (repeatable, easy to compete) — not one-off capital construction.""")
+categories (repeatable, easy to compete) — not one-off capital construction.
+
+The savings figures below are **scenario sizing, not estimates from the data**: they apply assumed
+savings rates of 5% / 8% / 12% to the tail spend outside each category's top 3 vendors. The data
+supplies the tail pool; the rates are assumptions.""")
 
 code("""frag=utils.fragmentation_table(addr, min_vendors=10)
 cand=frag[frag['spend']>2.5e7].copy()
@@ -272,25 +316,27 @@ S_disp=S.assign(spend_M=lambda d:(d['total_spend']/1e6).round(1),
 print(S_disp[['category','spend_M','n_vendors','tail_vendors','tail_M','save_M']].to_string(index=False))
 pool=S['tail_spend'].sum(); base=S['estimated_savings'].sum()
 print(f'\\nConsolidatable tail pool (5 indirect categories): ${pool:,.0f}')
-print(f'Estimated annual savings  @5% floor  = ${pool*0.05:,.0f}')
-print(f'                          @8% base   = ${base:,.0f}   <-- headline')
-print(f'                          @12% stretch= ${pool*0.12:,.0f}')""")
+print('Scenario sizing (assumed savings rate x tail pool):')
+print(f'  5% assumption  = ${pool*0.05:,.0f}')
+print(f'  8% assumption  = ${base:,.0f}')
+print(f'  12% assumption = ${pool*0.12:,.0f}')""")
 
 code("""fig,ax=plt.subplots(figsize=(9,4.6))
 Ss=S.sort_values('estimated_savings')
 ax.barh(Ss['category'].str.slice(0,34), Ss['estimated_savings']/1e6, color=GREEN)
 for i,(v,tv) in enumerate(zip(Ss['estimated_savings'],Ss['tail_vendors'])):
     ax.text(v/1e6,i,f'  ${v/1e6:.1f}M ({tv} tail vendors)',va='center',fontweight='bold',fontsize=9)
-ax.set_xlabel('Est. annual savings ($M) — 8% of consolidatable tail')
-ax.set_title(f'Sized opportunity: ${base/1e6:.0f}M/yr across 5 indirect categories'); plt.show()""")
+ax.set_xlabel('Scenario savings ($M/yr) at an assumed 8% of consolidatable tail')
+ax.set_title(f'Scenario sizing at 8%: ${base/1e6:.1f}M/yr across 5 indirect categories'); plt.show()""")
 
 md("""### Derived tables written to disk
 
-Everything above is computed in memory. These are the five tables worth keeping: two large
-intermediates under `data/processed/` (git-ignored, regenerated from the raw file), and three
+Everything above is computed in memory. These are the tables worth keeping: two large
+intermediates under `data/processed/` (git-ignored, regenerated from the raw file), and four
 small analyst-facing tables under `reports/` that are committed so a reviewer without the
-268k-row source extract can still read the classification, the scorecard, and the
-fragmentation view.""")
+268k-row source extract can still read the classification, the scorecard, the fragmentation
+view and the gross-to-net reconciliation. Payee names that look like private individuals are
+masked in the `reports/` tables (`utils.mask_individual_names`).""")
 
 code("""written = utils.export_tables(
     clean=df,
@@ -298,31 +344,96 @@ code("""written = utils.export_tables(
     abc=abc,
     scorecard=utils.supplier_scorecard(addr),
     fragmentation=utils.fragmentation_table(addr, min_vendors=5),
+    reconciliation=recon,
 )
 for label, path in written.items():
     print(f'{label:32s} -> {path}')""")
+
+code("""# Headline metrics -> reports/spend_metrics.json (every value computed above)
+import json
+summ_i = summ.set_index('abc'); seas_i = seas.set_index('month')
+def line(name): return {k: (int(v) if k.endswith('rows') else float(v))
+                        for k, v in r.loc[name].items()}
+metrics = {
+  'dataset': 'City of Houston Checkbook FY2024 (real public data)',
+  'date_range': [str(dt.min().date()), str(dt.max().date())],
+  'raw_rows': int(len(raw)),
+  'clean_spend_rows': int(len(df)),
+  'addressable_rows': int(len(addr)),
+  'spend_basis': 'gross: positive payments only; refunds/reversals excluded (see gross_to_net)',
+  'total_vendor_payments_usd': round(float(TOTAL), 2),
+  'addressable_spend_usd': round(float(ADDR), 2),
+  'addressable_pct': round(float(ADDR/TOTAL), 4),
+  'addressable_vendors': int(addr['vendor'].nunique()),
+  'addressable_categories': int(addr['category'].nunique()),
+  'hhi_addressable_vendor': round(utils.hhi(addr.groupby('vendor')['amount'].sum()), 1),
+  'gross_to_net': {
+    'raw_file': line('Raw file'),
+    'removed_exact_duplicates': line('Removed: exact duplicates'),
+    'removed_pool_cash': line('Removed: pool-cash check clearing'),
+    'removed_pseudo_vendors': line('Removed: pseudo-vendors (one-time / refund)'),
+    'in_scope': line('In-scope vendor payments'),
+    'in_scope_non_addressable': line('  of which non-addressable'),
+    'in_scope_addressable': line('  of which addressable procurement'),
+  },
+  'abc': {k: {'n_vendors': int(summ_i.loc[k,'n_vendors']),
+              'pct_vendors': round(float(summ_i.loc[k,'pct_entities']), 4),
+              'spend_usd': round(float(summ_i.loc[k,'spend']), 2),
+              'pct_spend': round(float(summ_i.loc[k,'pct_spend']), 4)} for k in ['A','B','C']},
+  'vendors_for_80pct': int(n80),
+  'top_vendor': {'name': abc.iloc[0]['vendor'], 'spend_usd': round(float(abc.iloc[0]['amount']), 2),
+                 'pct': round(float(abc.iloc[0]['spend_share']), 4)},
+  'contract_coverage_gaps': {
+    'definition': 'vendors with >$20M addressable spend and <50% of spend on rows with a contract number; '
+                  'a blank contract number is a coverage gap in the file, not unauthorized spend',
+    'n_vendors': int(len(gap)),
+  },
+  'consolidation_scenarios': {
+    'note': 'scenario sizing: assumed savings rates applied to tail spend outside the top 3 vendors; '
+            'the rates are assumptions, not estimated from the data',
+    'categories': list(S['category']),
+    'tail_pool_usd': round(float(pool), 2),
+    'assumed_rates': [0.05, 0.08, 0.12],
+    'scenario_at_5pct_usd': round(float(pool*0.05), 2),
+    'scenario_at_8pct_usd': round(float(base), 2),
+    'scenario_at_12pct_usd': round(float(pool*0.12), 2),
+  },
+  'seasonality': {
+    'note': 'one fiscal year (FY2024) only; not a tested multi-year pattern',
+    'peak_month': str(pk['month']),
+    'peak_spend_usd': round(float(pk['spend']), 2),
+    'peak_vs_avg_pct': round(float(pk['spend']/seas['spend'].mean()-1), 4),
+    'trough_month': str(lo['month']),
+    'trough_vs_avg_pct': round(float(lo['spend']/seas['spend'].mean()-1), 4),
+  },
+}
+with open('../reports/spend_metrics.json', 'w') as f:
+    json.dump(metrics, f, indent=2)
+print('WROTE ../reports/spend_metrics.json')""")
 
 md("""## 8. Sourcing recommendation
 
 Grounded in what *this* dataset shows — specific, opinionated, costed.
 
-**CONSOLIDATE (act now) — ~$32M/yr, ≈0.8% of addressable spend**
+**CONSOLIDATE — scenario sizing: ~$31.8M/yr at an assumed 8% (range $19.9M–$47.7M at 5%–12%)**
 - **Management Consulting Services — $411M across 257 vendors, top-3 only 28%.** The single largest
   fragmentation problem. ~$297M sits in a long tail. Run a tiered RFP, award 5–8 primes on a rate
-  card, and route work through them. Even a conservative 8% on the tail ≈ **$23.8M/yr** — the bulk
-  of the opportunity by itself.
+  card, and route work through them. At the assumed 8% rate on the tail this sizes at **$23.8M/yr** —
+  most of the scenario total.
 - **Architectural + Misc Support + Misc Other Services + Temp Personnel.** Same fragmentation
-  pattern at smaller scale; consolidating adds ~$8M/yr and cuts hundreds of low-value POs.
+  pattern at smaller scale; at the same assumed 8% they add ~$8.0M/yr.
 
 **SCRUTINIZE (governance) —**
-- **Off-contract high spend.** Vendors with >$20M spend and <50% contract coverage (see §6) — highest
-  price dispersion, weakest paper trail. Bring under contract before renewing.
+- **Contract-coverage gaps.** Eight vendors with >$20M spend have contract numbers on under half
+  of it (see §6). A missing contract number is a gap in the file, not proof of unauthorized buying —
+  several are public bodies or banks. Check which payments should link to a contract and fix the
+  coding or the paper before renewal.
 - **`Miscellaneous`-coded spend — ~$100M+ combined.** "Miscellaneous" is where category discipline
   goes to die. Re-code it; you cannot manage what you cannot classify.
 
 **RETIME —**
-- **Kill the June flush.** Year-end runs +78% above average. Move discretionary buys into the
-  Jan–Feb trough to dodge year-end price premiums and rushed single-source awards.
+- **Check the June peak.** In FY2024, June ran +78% above the monthly average. That is one year's
+  pattern; check it against other years before moving discretionary buys earlier in the year.
 
 **GROW / PROTECT —**
 - **Class A infrastructure primes** (Hensel Phelps, Houston Waterworks Team, Austin-Gilbane). Not a
@@ -335,8 +446,8 @@ Grounded in what *this* dataset shows — specific, opinionated, costed.
 
 ---
 ### How this maps to a manufacturer / Plant Buyer role
-The city is a stand-in for a multi-plant buyer: **ABC segmentation, tail rationalization, price-
-dispersion monitoring, contract-coverage governance, and fiscal-timing arbitrage** transfer directly.
+The city is a stand-in for a multi-plant buyer: **ABC segmentation, tail rationalization, payment-
+size monitoring, contract-coverage checks, and spend-timing analysis** transfer directly.
 The one piece public data can't provide — **supplier quality/defect from ERP/QMS** — is exactly the
 dimension I'd wire in first on the inside to complete the scorecard.""")
 

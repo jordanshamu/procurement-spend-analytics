@@ -1,0 +1,8 @@
+line,rows,gross_rows,gross_usd,refund_reversal_rows,refunds_reversals_usd,zero_rows,net_usd
+Raw file,267983,253618,6767192856.52,14364,-673845331.77,1,6093347524.75
+Removed: exact duplicates,1226,1218,2389533.89,8,-252885.83,0,2136648.06
+Removed: pool-cash check clearing,110,0,0.0,110,-18602595.65,0,-18602595.65
+Removed: pseudo-vendors (one-time / refund),23914,23754,95291233.24,160,-257583.35,0,95033649.89
+In-scope vendor payments,242733,228646,6669512089.39,14086,-654732266.94,1,6014779822.45
+  of which non-addressable,20583,20479,2907859394.99,104,-232568.81,0,2907626826.18
+  of which addressable procurement,222150,208167,3761652694.4,13982,-654499698.13,1,3107152996.27

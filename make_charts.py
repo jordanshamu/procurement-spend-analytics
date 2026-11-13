@@ -108,11 +108,12 @@ ax.set_xticks(range(len(seas))); ax.set_xticklabels([m.strftime("%b'%y") for m i
 avg = seas['spend'].mean()/1e6
 ax.axhline(avg, color=SLATE, ls="--", lw=1.2, label=f"monthly avg ${avg:.0f}M")
 peak_i = int(np.argmax(seas['spend'].values))
-ax.annotate("Fiscal year-end\nsurge (+78% vs avg)", (peak_i, seas['spend'].max()/1e6),
+peak_pct = seas['spend'].max()/seas['spend'].mean()*100 - 100
+ax.annotate(f"Fiscal year-end\n({peak_pct:+.0f}% vs avg)", (peak_i, seas['spend'].max()/1e6),
             xytext=(peak_i-4.2, seas['spend'].max()/1e6*0.92),
             arrowprops=dict(arrowstyle="->", color=INK), fontweight="bold")
 ax.set_ylabel("Spend ($M)"); ax.legend()
-ax.set_title("Spend seasonality: a pronounced June fiscal-year-end spike")
+ax.set_title("Monthly spend, FY2024 only: June (fiscal year-end) is the peak")
 plt.savefig(f"{V}/06_seasonality.png"); plt.close()
 
 # ---- 07 Fragmentation scatter (bubble) ----------------------------------
@@ -141,14 +142,14 @@ ax.barh(sav['category'].str.slice(0,34), sav['estimated_savings']/1e6, color=GRE
 for i,(v,tv) in enumerate(zip(sav['estimated_savings'], sav['tail_vendors'])):
     ax.text(v/1e6, i, f"  ${v/1e6:.1f}M  ({tv} tail vendors)", va="center", fontweight="bold", fontsize=9)
 tot = sav['estimated_savings'].sum()
-ax.set_xlabel("Estimated annual savings ($M) — 8% of consolidatable tail")
-ax.set_title(f"Sized consolidation opportunity: ${tot/1e6:.0f}M/yr across 5 indirect categories")
+ax.set_xlabel("Scenario savings ($M/yr) at an assumed 8% of consolidatable tail")
+ax.set_title(f"Scenario sizing at 8%: ${tot/1e6:.1f}M/yr across 5 indirect categories")
 plt.savefig(f"{V}/08_savings_opportunity.png"); plt.close()
 
 # ---- 09 Supplier scorecard heat (top 15 addressable) --------------------
 sc = utils.supplier_scorecard(addr, top_n=15)
-metrics = ['total_spend','txns','avg_txn','price_dispersion','active_months','contract_coverage']
-labels  = ['Total spend','Txn count','Avg ticket','Price disp. (CV)','Active months','Contract cov.']
+metrics = ['total_spend','txns','avg_txn','payment_size_dispersion','active_months','contract_coverage']
+labels  = ['Total spend','Txn count','Avg ticket','Payment-size disp. (CV)','Active months','Contract cov.']
 norm = sc[metrics].copy()
 for m in metrics: norm[m] = (sc[m]-sc[m].min())/(sc[m].max()-sc[m].min()+1e-9)
 fig, ax = plt.subplots(figsize=(10, 6.5))
@@ -156,7 +157,7 @@ im = ax.imshow(norm.values, aspect="auto", cmap="BuPu")
 ax.set_yticks(range(len(sc))); ax.set_yticklabels(sc['vendor'].str.title().str.slice(0,30))
 ax.set_xticks(range(len(labels))); ax.set_xticklabels(labels, rotation=30, ha="right")
 raw_vals = {'total_spend':lambda v:f"${v/1e6:.0f}M",'txns':lambda v:f"{int(v)}",
-            'avg_txn':lambda v:f"${v/1e3:.0f}k",'price_dispersion':lambda v:f"{v:.1f}",
+            'avg_txn':lambda v:f"${v/1e3:.0f}k",'payment_size_dispersion':lambda v:f"{v:.1f}",
             'active_months':lambda v:f"{int(v)}",'contract_coverage':lambda v:f"{v*100:.0f}%"}
 for i in range(len(sc)):
     for j,m in enumerate(metrics):
@@ -165,19 +166,19 @@ for i in range(len(sc)):
 ax.set_title("Supplier scorecard — top 15 addressable vendors (color = relative rank)")
 plt.savefig(f"{V}/09_supplier_scorecard.png"); plt.close()
 
-# ---- 10 Price dispersion (illustrative quality overlay) -----------------
+# ---- 10 Payment-size dispersion (illustrative quality overlay) ----------
 scq = utils.add_illustrative_quality(utils.supplier_scorecard(addr, top_n=40))
 fig, ax = plt.subplots(figsize=(9.5, 5.5))
 sizes = (scq['total_spend']/scq['total_spend'].max()*900)+25
-sc2 = ax.scatter(scq['price_dispersion'], scq['quality_score_SYNTH'], s=sizes,
+sc2 = ax.scatter(scq['payment_size_dispersion'], scq['quality_score_SYNTH'], s=sizes,
                  c=scq['regularity_proxy'], cmap="viridis", alpha=0.8, edgecolor=INK, lw=0.4)
-ax.set_xlabel("Price dispersion (coefficient of variation) — REAL")
+ax.set_xlabel("Payment-size dispersion (coefficient of variation) — REAL")
 ax.set_ylabel("Quality score — SYNTHETIC / illustrative")
-ax.set_title("Scorecard shape demo: price volatility vs (synthetic) quality")
+ax.set_title("Scorecard shape demo: payment-size variation vs (synthetic) quality")
 ax.text(0.98, 0.03, "⚠ Quality axis is synthetic — ERP/QMS data out of scope for public spend",
         transform=ax.transAxes, ha="right", fontsize=8.5, style="italic", color=CLAY)
 plt.colorbar(sc2, label="Payment regularity (txns/active month)")
-plt.savefig(f"{V}/10_price_vs_quality_synth.png"); plt.close()
+plt.savefig(f"{V}/10_payment_size_vs_quality_synth.png"); plt.close()
 
 print("All charts written to", V)
 import os

@@ -7,12 +7,78 @@
   "raw_rows": 267983,
   "clean_spend_rows": 228646,
   "addressable_rows": 208167,
+  "spend_basis": "gross: positive payments only; refunds/reversals excluded (see gross_to_net)",
   "total_vendor_payments_usd": 6669512089.39,
   "addressable_spend_usd": 3761652694.4,
   "addressable_pct": 0.564,
   "addressable_vendors": 3701,
   "addressable_categories": 278,
   "hhi_addressable_vendor": 124.1,
+  "gross_to_net": {
+    "raw_file": {
+      "rows": 267983,
+      "gross_rows": 253618,
+      "gross_usd": 6767192856.52,
+      "refund_reversal_rows": 14364,
+      "refunds_reversals_usd": -673845331.77,
+      "zero_rows": 1,
+      "net_usd": 6093347524.75
+    },
+    "removed_exact_duplicates": {
+      "rows": 1226,
+      "gross_rows": 1218,
+      "gross_usd": 2389533.89,
+      "refund_reversal_rows": 8,
+      "refunds_reversals_usd": -252885.83,
+      "zero_rows": 0,
+      "net_usd": 2136648.06
+    },
+    "removed_pool_cash": {
+      "rows": 110,
+      "gross_rows": 0,
+      "gross_usd": 0.0,
+      "refund_reversal_rows": 110,
+      "refunds_reversals_usd": -18602595.65,
+      "zero_rows": 0,
+      "net_usd": -18602595.65
+    },
+    "removed_pseudo_vendors": {
+      "rows": 23914,
+      "gross_rows": 23754,
+      "gross_usd": 95291233.24,
+      "refund_reversal_rows": 160,
+      "refunds_reversals_usd": -257583.35,
+      "zero_rows": 0,
+      "net_usd": 95033649.89
+    },
+    "in_scope": {
+      "rows": 242733,
+      "gross_rows": 228646,
+      "gross_usd": 6669512089.39,
+      "refund_reversal_rows": 14086,
+      "refunds_reversals_usd": -654732266.94,
+      "zero_rows": 1,
+      "net_usd": 6014779822.45
+    },
+    "in_scope_non_addressable": {
+      "rows": 20583,
+      "gross_rows": 20479,
+      "gross_usd": 2907859394.99,
+      "refund_reversal_rows": 104,
+      "refunds_reversals_usd": -232568.81,
+      "zero_rows": 0,
+      "net_usd": 2907626826.18
+    },
+    "in_scope_addressable": {
+      "rows": 222150,
+      "gross_rows": 208167,
+      "gross_usd": 3761652694.4,
+      "refund_reversal_rows": 13982,
+      "refunds_reversals_usd": -654499698.13,
+      "zero_rows": 1,
+      "net_usd": 3107152996.27
+    }
+  },
   "abc": {
     "A": {
       "n_vendors": 159,
@@ -39,7 +105,12 @@
     "spend_usd": 194661399.87,
     "pct": 0.0517
   },
-  "consolidation": {
+  "contract_coverage_gaps": {
+    "definition": "vendors with >$20M addressable spend and <50% of spend on rows with a contract number; a blank contract number is a coverage gap in the file, not unauthorized spend",
+    "n_vendors": 8
+  },
+  "consolidation_scenarios": {
+    "note": "scenario sizing: assumed savings rates applied to tail spend outside the top 3 vendors; the rates are assumptions, not estimated from the data",
     "categories": [
       "Management Consulting Services",
       "Architectural Services",
@@ -48,14 +119,21 @@
       "Temporary Personnel Services"
     ],
     "tail_pool_usd": 397397093.08,
-    "savings_at_5pct": 19869854.65,
-    "savings_at_8pct_base": 31791767.45,
-    "savings_at_12pct": 47687651.17
+    "assumed_rates": [
+      0.05,
+      0.08,
+      0.12
+    ],
+    "scenario_at_5pct_usd": 19869854.65,
+    "scenario_at_8pct_usd": 31791767.45,
+    "scenario_at_12pct_usd": 47687651.17
   },
   "seasonality": {
+    "note": "one fiscal year (FY2024) only; not a tested multi-year pattern",
     "peak_month": "2024-06",
     "peak_spend_usd": 558195320.89,
     "peak_vs_avg_pct": 0.7807,
-    "trough_month": "2024-01"
+    "trough_month": "2024-01",
+    "trough_vs_avg_pct": -0.2826
   }
 }

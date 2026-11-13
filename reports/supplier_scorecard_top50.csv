@@ -1,4 +1,4 @@
-vendor,total_spend,txns,avg_txn,median_txn,std_txn,active_months,n_categories,n_departments,contract_spend,price_dispersion,regularity_proxy,contract_coverage,spend_rank
+vendor,total_spend,txns,avg_txn,median_txn,std_txn,active_months,n_categories,n_departments,contract_spend,payment_size_dispersion,regularity_proxy,contract_coverage,spend_rank
 HENSEL PHELPS CONSTRUCTION CO,194661399.87,119,1635810.0829411766,592259.0,2601040.218796601,12,3,1,175086572.57,1.5900624686943772,9.916666666666666,0.8994416596558301,1
 HOUSTON WATERWORKS TEAM,170262360.38,102,1669238.8272549019,267064.10000000003,3532087.4263639324,12,1,1,168941849.37,2.115986861012887,8.5,0.9922442575854533,2
 AUSTIN GILBANE A JOINT VENTURE,164609354.78,633,260046.3740600316,80561.78,482718.4266162146,11,2,1,161417304.5,1.856278244067265,57.54545454545455,0.9806083300413505,3
